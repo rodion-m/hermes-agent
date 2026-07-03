@@ -180,7 +180,7 @@ class TestProfileScopedHubActions:
         assert calls == [
             (
                 ["-p", "worker_alpha", "skills", "install", "official/demo", "--yes"],
-                "skills-install",
+                web_server._hub_install_action_name("official/demo"),
             )
         ]
 

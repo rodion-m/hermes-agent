@@ -359,6 +359,10 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   const probesRef = useRef(probes)
   probesRef.current = probes
 
+  // Blocks the browser until an OAuth flow lands a token; also reset on profile
+  // switch, so declared up here alongside the other per-profile view state.
+  const [authing, setAuthing] = useState<null | string>(null)
+
   // Master document draft. `docVersion` remounts the editor when the draft is
   // regenerated programmatically (list-side mutations); `dirty` guards user
   // edits from being clobbered by those regenerations.
@@ -444,14 +448,25 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
     }
   }, [config])
 
+  // Bumped on every profile switch. Async probe/auth completions capture the
+  // epoch at call time and bail if it changed, so a slow profile-A request can't
+  // write its result into profile B's state after the user switched.
+  const profileEpoch = useRef(0)
+
   // A profile switch invalidates the config query (see store/profile.ts), which
-  // refetches the new backend's mcp.json. Reset per-profile view state so the
-  // draft reseeds for the new profile and the old profile's probes don't linger
-  // (the probe cache is already profile-keyed, so this just forces a re-probe).
+  // refetches the new backend's mcp.json. Reset ALL per-profile view state — the
+  // draft (incl. a dirty one, so profile A's edits can't be saved into B), its
+  // seed latch, probes, and cursor — so everything reseeds for the new profile.
+  // The probe cache is already profile-keyed, so this just forces a re-probe.
   useOnProfileSwitch(() => {
+    profileEpoch.current += 1
     draftSeeded.current = false
     setProbes({})
     setCursor(0)
+    setAuthing(null)
+    setDirty(false)
+    setDraft('')
+    setDocVersion(version => version + 1)
   })
 
   useDeepLinkHighlight({
@@ -463,14 +478,25 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   })
 
   const runProbe = async (serverName: string) => {
+    const epoch = profileEpoch.current
     const key = probeKey(serverName, servers[serverName])
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
       const result = await testMcpServer(serverName)
+
+      // Drop the result if the profile changed mid-probe — it belongs to A.
+      if (profileEpoch.current !== epoch) {
+        return
+      }
+
       probeCache.set(key, { at: Date.now(), result })
       setProbes(current => ({ ...current, [serverName]: result }))
     } catch (err) {
+      if (profileEpoch.current !== epoch) {
+        return
+      }
+
       const result = { ok: false, error: err instanceof Error ? err.message : String(err), tools: [] }
       probeCache.set(key, { at: Date.now(), result })
       setProbes(current => ({ ...current, [serverName]: result }))
@@ -480,14 +506,19 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
   // First-class OAuth: opens the system browser, blocks until the flow lands a
   // token (verified on disk — a friendly tools/list is not proof), then the
   // auth result doubles as the probe (it carries the tool list).
-  const [authing, setAuthing] = useState<null | string>(null)
-
   const authenticate = async (serverName: string) => {
+    const epoch = profileEpoch.current
     setAuthing(serverName)
     setProbes(current => ({ ...current, [serverName]: 'probing' }))
 
     try {
       const result = await authMcpServer(serverName)
+
+      // Bail if the user switched profiles mid-flow — this result is profile A's.
+      if (profileEpoch.current !== epoch) {
+        return
+      }
+
       setProbes(current => ({ ...current, [serverName]: result }))
       // Cache under the POST-auth fingerprint (auth: oauth) on success — that's
       // the config the mount effect will read back, so it hits this entry.
@@ -516,13 +547,19 @@ export function McpTab({ gateway }: { gateway: HermesGateway | null }) {
         notifyError(new Error(result.error), serverName)
       }
     } catch (err) {
+      if (profileEpoch.current !== epoch) {
+        return
+      }
+
       setProbes(current => ({
         ...current,
         [serverName]: { ok: false, error: err instanceof Error ? err.message : String(err), tools: [] }
       }))
       notifyError(err, serverName)
     } finally {
-      setAuthing(null)
+      if (profileEpoch.current === epoch) {
+        setAuthing(null)
+      }
     }
   }
 

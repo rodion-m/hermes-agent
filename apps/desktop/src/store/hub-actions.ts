@@ -44,6 +44,7 @@ async function runHubAction(key: string, kind: HubActionKind, spawn: () => Promi
 
   try {
     const started = await spawn()
+    let exitCode: number | null = null
 
     for (;;) {
       const status = await getActionStatus(started.name, 200)
@@ -51,13 +52,17 @@ async function runHubAction(key: string, kind: HubActionKind, spawn: () => Promi
       $hubActions.setKey(key, { kind, running: status.running, lines: status.lines })
 
       if (!status.running) {
+        exitCode = status.exit_code
+
         break
       }
 
       await new Promise(resolve => setTimeout(resolve, POLL_MS))
     }
 
-    if (key !== UPDATE_ALL_KEY) {
+    // Only flip the row on a clean exit — a failed install/uninstall must not
+    // render as installed/removed.
+    if (key !== UPDATE_ALL_KEY && exitCode === 0) {
       $hubInstalledOverride.setKey(key, kind !== 'uninstall')
     }
 

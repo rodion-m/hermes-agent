@@ -1028,6 +1028,7 @@ export function searchSkillsHub(query: string, source = 'all', limit = 20): Prom
 
 export function previewSkillHub(identifier: string): Promise<SkillHubPreview> {
   return window.hermesDesktop.api<SkillHubPreview>({
+    ...profileScoped(),
     path: `/api/skills/hub/preview?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
@@ -1035,6 +1036,7 @@ export function previewSkillHub(identifier: string): Promise<SkillHubPreview> {
 
 export function scanSkillHub(identifier: string): Promise<SkillHubScanResult> {
   return window.hermesDesktop.api<SkillHubScanResult>({
+    ...profileScoped(),
     path: `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
